@@ -15,3 +15,9 @@ export interface User {
   created_at: string;
   last_login_at: string;
 }
+
+export interface AccessToken {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}

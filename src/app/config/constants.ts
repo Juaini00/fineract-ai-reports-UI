@@ -1,6 +1,8 @@
-export const API_BASE_URL = "http://localhost:3007";
+export const API_BASE_URL = "http://127.0.0.1:3007";
 export const LOCAL_ADMIN_TOKEN = "local-admin-token";
 export const ACCESS_TOKEN_KEY = "access-token";
+export const CHAT_API_KEY_KEY = "chat-api-key";
+export const CHAT_ACTIVE_JOB_KEY = "chat-active-job";
 
 export const TOAST_MESSAGES = {
   loading: 'Loading...',

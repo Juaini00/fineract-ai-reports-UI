@@ -1,7 +1,7 @@
 import { apiGet, apiPost } from "@/shared/service/api.service";
 import type { ApiResponse } from "@/shared/types";
 import type { SignInValues } from "@/shared/validators/auth";
-import type { AuthResponse, User } from "../types";
+import type { AccessToken, AuthResponse, User } from "../types";
 
 
 
@@ -38,6 +38,18 @@ export const authService = {
         showToast: {
           loading: "Fetching user data...",
           error: "Failed to fetch user data.",
+        },
+      },
+    );
+  },
+  RefreshToken: async (): Promise<ApiResponse<AccessToken>> => {
+    return await apiPost<ApiResponse<AccessToken>>(
+      {
+        url: "/auth/refresh",
+        showToast: {
+          loading: "Refreshing session...",
+          success: "Session refreshed successfully.",
+          error: "Failed to refresh session.",
         },
       },
     );
