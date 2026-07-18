@@ -2,15 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Bell, Sun, Moon, User } from "lucide-react";
 import { useTheme } from "next-themes";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "../../../shared/components/ui/dropdown-menu";
-import { Button } from "../../../shared/components/ui/button";
 
 export default function HeaderControls({
   isMobile,
@@ -22,7 +13,7 @@ export default function HeaderControls({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const loc = useLocation();
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
 
   const [prevPathname, setPrevPathname] = useState(loc.pathname);
   if (loc.pathname !== prevPathname) {
@@ -41,54 +32,32 @@ export default function HeaderControls({
   }, []);
 
   const toggleTheme = () => {
-    setTheme(theme === "dark" ? "light" : "dark");
+    setTheme(resolvedTheme === "dark" ? "light" : "dark");
   };
 
-  if (!isMobile) {
-    return (
-      <div className="flex items-center gap-3">
-        <button className="p-2 rounded-md hover:bg-sidebar-accent">
-          <Bell className="h-5 w-5" />
-        </button>
-        <button
-          onClick={toggleTheme}
-          className="p-2 rounded-md hover:bg-sidebar-accent transition-colors"
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          {theme === "dark" ? (
-            <Sun className="h-5 w-5" />
-          ) : (
-            <Moon className="h-5 w-5" />
-          )}
-        </button>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <button className="hover:cursor-pointer">
-                <div className="flex items-center gap-2 ml-2">
-                  <div className="h-8 w-8 rounded-full bg-linear-to-tr from-pink-500 to-yellow-400" />
-                </div>
-              </button>
-            }
-          >
-            Open
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuGroup>
-              <DropdownMenuItem>Profile</DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onLogout}><Button variant="destructive" className="w-full py-0">logout</Button></DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    );
-  }
-
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative flex items-center gap-3" ref={ref}>
+      {!isMobile && (
+        <>
+          <button type="button" className="p-2 rounded-md hover:bg-sidebar-accent">
+            <Bell className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="p-2 rounded-md hover:bg-sidebar-accent transition-colors"
+            aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
+          >
+            {resolvedTheme === "dark" ? (
+              <Sun className="h-5 w-5" />
+            ) : (
+              <Moon className="h-5 w-5" />
+            )}
+          </button>
+        </>
+      )}
       <button
+        type="button"
         aria-label="Open menu"
         className="p-1 rounded-md"
         onClick={() => setOpen((s) => !s)}
@@ -98,7 +67,7 @@ export default function HeaderControls({
         </div>
       </button>
       {open && (
-        <div className="absolute right-0 mt-2 w-40 bg-popover border rounded-md shadow-md z-40">
+        <div className="absolute right-0 top-full mt-2 w-40 bg-popover border rounded-md shadow-md z-40">
           <ul className="p-2">
             <li>
               <Link
@@ -118,22 +87,24 @@ export default function HeaderControls({
             </li>
             <li>
               <button
+                type="button"
                 onClick={() => {
                   setOpen(false);
                   toggleTheme();
                 }}
                 className="w-full text-left px-2 py-1 rounded hover:bg-accent flex items-center gap-2"
               >
-                {theme === "dark" ? (
+                {resolvedTheme === "dark" ? (
                   <Sun className="h-4 w-4" />
                 ) : (
                   <Moon className="h-4 w-4" />
                 )}
-                {theme === "dark" ? "Light mode" : "Dark mode"}
+                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
               </button>
             </li>
             <li>
               <button
+                type="button"
                 onClick={() => {
                   setOpen(false);
                   onLogout();
