@@ -1,7 +1,7 @@
 import { apiGet, apiPost } from "@/shared/service/api.service";
 import type { ApiResponse } from "@/shared/types";
 import type { SignInValues } from "@/shared/validators/auth";
-import type { AccessToken, AuthResponse, User } from "../types";
+import type { AccessToken, AuthResponse, CreateApiKeyPayload, CreatedApiKey, User } from "../types";
 
 
 
@@ -45,6 +45,19 @@ export const authService = {
         url: "/auth/refresh",
         silent: true,
       },
+    );
+  },
+  CreateApiKey: async (payload: CreateApiKeyPayload): Promise<ApiResponse<CreatedApiKey>> => {
+    return await apiPost<ApiResponse<CreatedApiKey>, CreateApiKeyPayload>(
+      {
+        url: "/auth/api-keys",
+        showToast: {
+          loading: "Creating chat key...",
+          success: "Chat key connected.",
+          error: "Failed to create chat key.",
+        },
+      },
+      payload,
     );
   },
   mapToUserProfile: (user: User): User => user,

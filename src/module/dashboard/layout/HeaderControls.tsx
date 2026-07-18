@@ -1,7 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
-import { Bell, Sun, Moon, User } from "lucide-react";
+import { Bell, LogOut, Moon, Settings, Sun, User } from "lucide-react";
 import { useTheme } from "next-themes";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../../../shared/components/ui/dropdown-menu";
 
 export default function HeaderControls({
   isMobile,
@@ -10,113 +17,30 @@ export default function HeaderControls({
   isMobile: boolean;
   onLogout: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-  const loc = useLocation();
   const { resolvedTheme, setTheme } = useTheme();
-
-  const [prevPathname, setPrevPathname] = useState(loc.pathname);
-  if (loc.pathname !== prevPathname) {
-    setPrevPathname(loc.pathname);
-    setOpen(false);
-  }
-
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!ref.current) return;
-      const t = e.target as Node;
-      if (!ref.current.contains(t)) setOpen(false);
-    }
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
-  }, []);
-
-  const toggleTheme = () => {
-    setTheme(resolvedTheme === "dark" ? "light" : "dark");
-  };
+  const isDark = resolvedTheme === "dark";
 
   return (
-    <div className="relative flex items-center gap-3" ref={ref}>
-      {!isMobile && (
-        <>
-          <button type="button" className="p-2 rounded-md hover:bg-sidebar-accent">
-            <Bell className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="p-2 rounded-md hover:bg-sidebar-accent transition-colors"
-            aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
-          >
-            {resolvedTheme === "dark" ? (
-              <Sun className="h-5 w-5" />
-            ) : (
-              <Moon className="h-5 w-5" />
-            )}
-          </button>
-        </>
-      )}
-      <button
-        type="button"
-        aria-label="Open menu"
-        className="p-1 rounded-md"
-        onClick={() => setOpen((s) => !s)}
-      >
-        <div className="h-8 w-8 rounded-full bg-linear-to-tr from-pink-500 to-yellow-400 flex items-center justify-center">
-          <User className="h-4 w-4 text-white" />
-        </div>
+    <div className="flex items-center gap-1 sm:gap-2">
+      {!isMobile && <button aria-label="Notifications unavailable" className="rounded-lg p-2 text-muted-foreground opacity-55" disabled title="Notifications — coming soon" type="button"><Bell className="size-4" /></button>}
+      <button aria-label={`Switch to ${isDark ? "light" : "dark"} mode`} className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onClick={() => setTheme(isDark ? "light" : "dark")} type="button">
+        {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-2 w-40 bg-popover border rounded-md shadow-md z-40">
-          <ul className="p-2">
-            <li>
-              <Link
-                to="/profile"
-                className="block px-2 py-1 rounded hover:bg-accent"
-              >
-                Profile
-              </Link>
-            </li>
-            <li>
-              <Link
-                to="/settings"
-                className="block px-2 py-1 rounded hover:bg-accent"
-              >
-                Settings
-              </Link>
-            </li>
-            <li>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  toggleTheme();
-                }}
-                className="w-full text-left px-2 py-1 rounded hover:bg-accent flex items-center gap-2"
-              >
-                {resolvedTheme === "dark" ? (
-                  <Sun className="h-4 w-4" />
-                ) : (
-                  <Moon className="h-4 w-4" />
-                )}
-                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  onLogout();
-                }}
-                className="w-full text-left px-2 py-1 rounded hover:bg-accent"
-              >
-                Sign out
-              </button>
-            </li>
-          </ul>
-        </div>
-      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<button aria-label="Open account menu" className="flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" type="button" />}>
+          <span className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary"><User className="size-4" /></span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuLabel className="px-2 py-2"><span className="block text-sm font-medium text-foreground">Your account</span><span className="mt-0.5 block font-normal">Workspace access</span></DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem disabled><User />Profile <span className="ml-auto text-[10px] uppercase tracking-wide">Soon</span></DropdownMenuItem>
+            <DropdownMenuItem disabled><Settings />Settings <span className="ml-auto text-[10px] uppercase tracking-wide">Soon</span></DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onLogout} variant="destructive"><LogOut />Sign out</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

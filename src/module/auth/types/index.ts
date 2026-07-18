@@ -21,3 +21,19 @@ export interface AccessToken {
   token_type: string;
   expires_in: number;
 }
+
+export interface CreateApiKeyPayload {
+  name: string;
+  expires_at?: string | null;
+  allowed_office_ids?: number[];
+  allowed_capabilities?: string[];
+  allow_all_offices?: boolean;
+  allow_all_capabilities?: boolean;
+  can_view_pii?: boolean;
+}
+
+export interface CreatedApiKey {
+  id: string;
+  api_key: string;
+  message: string;
+}
