@@ -1,13 +1,15 @@
-import { ACCESS_TOKEN_KEY } from "@/app/config/constants";
+import { ACCESS_TOKEN_KEY, CHAT_ACTIVE_JOB_KEY, CHAT_API_KEY_KEY } from "@/app/config/constants";
 import { authService } from "@/module/auth/service";
 import type { User } from "@/module/auth/types";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 
 export const AUTH_QUERY_KEYS = {
   profile: ["auth", "profile"] as const,
 } as const;
+
+export const isProfileQueryEnabled = (token: string | null) => Boolean(token);
 
 type AuthState = {
   token: string | null;
@@ -17,7 +19,7 @@ type AuthState = {
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
-  token: localStorage.getItem(ACCESS_TOKEN_KEY),
+  token: typeof localStorage !== "undefined" && typeof localStorage.getItem === "function" ? localStorage.getItem(ACCESS_TOKEN_KEY) : null,
   user: null,
   setAuth: (token, user) => {
     localStorage.setItem(ACCESS_TOKEN_KEY, token);
@@ -25,6 +27,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
   clearAuth: () => {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(CHAT_API_KEY_KEY);
+    sessionStorage.removeItem(CHAT_API_KEY_KEY);
+    localStorage.removeItem(CHAT_ACTIVE_JOB_KEY);
+    sessionStorage.removeItem(CHAT_ACTIVE_JOB_KEY);
     set({ token: null, user: null });
   },
 }));
@@ -32,6 +38,11 @@ export const useAuthStore = create<AuthState>((set) => ({
 export function useAuth() {
   const queryClient = useQueryClient();
   const { token, user, setAuth, clearAuth } = useAuthStore();
+  const clearAuthAndQueries = useCallback(() => {
+    clearAuth();
+    queryClient.removeQueries({ queryKey: ["auth"] });
+    queryClient.removeQueries({ queryKey: ["chat"] });
+  }, [clearAuth, queryClient]);
 
   const profileQuery = useQuery({
     queryKey: AUTH_QUERY_KEYS.profile,
@@ -42,7 +53,7 @@ export function useAuth() {
       if (token) setAuth(token, profile);
       return profile;
     },
-    enabled: Boolean(token),
+    enabled: isProfileQueryEnabled(token),
     retry: false,
     refetchOnWindowFocus: false,
     staleTime: 60_000,
@@ -52,14 +63,16 @@ export function useAuth() {
   const logoutMutation = useMutation({
     mutationFn: authService.logout,
     onSettled: () => {
-      clearAuth();
-      queryClient.removeQueries({ queryKey: ["auth"] });
+      clearAuthAndQueries();
     },
   });
 
   useEffect(() => {
-    if (profileQuery.error) clearAuth();
-  }, [profileQuery.error, clearAuth]);
+    if (profileQuery.error) {
+      clearAuth();
+      queryClient.removeQueries({ queryKey: ["chat"] });
+    }
+  }, [profileQuery.error, clearAuth, queryClient]);
 
   const currentUser = profileQuery.isError ? null : user ?? profileQuery.data ?? null;
 
@@ -73,6 +86,6 @@ export function useAuth() {
     token,
     profileQuery,
     logoutMutation: logoutMutation,
-    clearAuth: clearAuth
+    clearAuth: clearAuthAndQueries
   };
 }

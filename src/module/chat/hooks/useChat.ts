@@ -1,311 +1,336 @@
 import { CHAT_ACTIVE_JOB_KEY, CHAT_API_KEY_KEY } from "@/app/config/constants";
+import { useAuth } from "@/module/auth/hooks/useAuth";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { create } from "zustand";
-import { chatService, streamChatJob } from "../service";
-import type { ChatJob, ChatMessage, ChatSession, ChatStreamUpdate, ClarificationOption } from "../types";
-
-const activeStatuses = new Set(["queued", "running", "waiting_for_user_input"]);
-const finishedStatuses = new Set(["completed", "failed", "expired", "cancelled"]);
+import { chatService } from "../service";
+import type { ChatJob, ChatJobResponse, ChatMessage, ChatSession } from "../types";
+import { useChatJob } from "./useChatJob";
 
 export const CHAT_QUERY_KEYS = {
-  sessions: (apiKey: string) => ["chat", "sessions", apiKey] as const,
-  messages: (apiKey: string, sessionId: string) => ["chat", "messages", apiKey, sessionId] as const,
+  sessions: (userId: string) => ["chat", userId, "sessions"] as const,
+  messages: (userId: string, sessionId: string) => ["chat", userId, "sessions", sessionId, "messages"] as const,
 };
 
-type ActiveJobCache = { jobId: string; sessionId: string };
+export const chatDraftKey = (userId: string, sessionId: string | null): string =>
+  `${userId}:${sessionId ?? "new"}`;
+
+export const validPrompt = (value: string): string | null => {
+  const prompt = value.trim();
+  return prompt.length >= 1 && prompt.length <= 1000 ? prompt : null;
+};
+
+export function chatComposerAvailability({
+  hasUser, sessionsLoading, activeLock, startingJob,
+}: {
+  hasUser: boolean;
+  sessionsLoading: boolean;
+  activeLock: boolean;
+  startingJob: boolean;
+}): { disabled: boolean; reason: string | null } {
+  const reason = !hasUser ? "Preparing your account before sending."
+    : sessionsLoading ? "Wait for conversations to finish loading before sending."
+      : activeLock ? "Wait for the current chat activity to finish before sending."
+        : startingJob ? "Wait for the current request to start before sending again."
+          : null;
+  return { disabled: reason !== null, reason };
+}
+
+export const selectedSessionFor = (sessions: ChatSession[], sessionId: string | null): ChatSession | null =>
+  sessions.find((session) => session.id === sessionId) ?? null;
+
+export const selectedSessionIdFor = (
+  sessions: ChatSession[], requestedSessionId: string | null, sessionsLoaded: boolean,
+): string => {
+  if (requestedSessionId === "new") return "new";
+  if (!sessionsLoaded && requestedSessionId) return requestedSessionId;
+  return selectedSessionFor(sessions, requestedSessionId)?.id ?? sessions[0]?.id ?? "new";
+};
+
+export const replaceOptimisticMessage = (messages: ChatMessage[], temporaryId: string, userMessageId: string): ChatMessage[] =>
+  messages.map((message) => message.id === temporaryId ? { ...message, id: userMessageId } : message);
+
+export const removeOptimisticMessage = (messages: ChatMessage[], temporaryId: string): ChatMessage[] =>
+  messages.filter((message) => message.id !== temporaryId);
+
+export const jobSessionId = (selectedSession: ChatSession | null): string | null => selectedSession?.id ?? null;
+
+export const adoptOptimisticMessage = (
+  message: ChatMessage, sessionId: string, userMessageId: string | undefined, jobId: string,
+): ChatMessage => ({ ...message, id: userMessageId ?? message.id, session_id: sessionId, job_id: jobId });
+
+export const ambiguousRecoveryCandidates = (
+  previousSessionIds: ReadonlySet<string>, sessions: ChatSession[], limit = 10,
+): ChatSession[] => sessions.filter(({ id }) => !previousSessionIds.has(id)).slice(0, limit);
+
+export function matchingAmbiguousMessage(messages: ChatMessage[], prompt: string): ChatMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && message.job_id && message.content.trim() === prompt) return message;
+  }
+  return null;
+}
+
+export function isAmbiguousJobStartFailure(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return /network|fetch|connection|disconnect|timeout|chat request failed/i.test(message);
+}
+
+const session = typeof sessionStorage !== "undefined" && typeof sessionStorage.getItem === "function" &&
+  typeof sessionStorage.setItem === "function" && typeof sessionStorage.removeItem === "function" ? sessionStorage : null;
 
 type ChatState = {
   apiKey: string;
   apiKeyInput: string;
-  input: string;
+  drafts: Record<string, string>;
+  errors: Record<string, string | null>;
   isSessionListCollapsed: boolean;
-  activeJob: ChatJob | null;
-  statusText: string | null;
-  clarificationOptions: ClarificationOption[];
-  error: string | null;
-  setApiKeyInput: (apiKeyInput: string) => void;
-  saveApiKey: () => void;
-  setInput: (input: string) => void;
-  setSessionListCollapsed: (value: boolean) => void;
-  setActiveJob: (activeJob: ChatJob | null) => void;
-  setStatusText: (statusText: string | null) => void;
-  setClarificationOptions: (clarificationOptions: ClarificationOption[]) => void;
-  setError: (error: string | null) => void;
+  setApiKeyInput(value: string): void;
+  connectApiKey(value: string): void;
+  setDraft(key: string, value: string): void;
+  setError(key: string, value: string | null): void;
+  setSessionListCollapsed(value: boolean): void;
+  resetIdentity(): void;
 };
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  apiKey: localStorage.getItem(CHAT_API_KEY_KEY) || "",
-  apiKeyInput: localStorage.getItem(CHAT_API_KEY_KEY) || "",
-  input: "",
+  apiKey: session?.getItem(CHAT_API_KEY_KEY) ?? "",
+  apiKeyInput: "",
+  drafts: {},
+  errors: {},
   isSessionListCollapsed: false,
-  activeJob: null,
-  statusText: null,
-  clarificationOptions: [],
-  error: null,
   setApiKeyInput: (apiKeyInput) => set({ apiKeyInput }),
-  saveApiKey: () => {
-    const apiKey = get().apiKeyInput.trim();
-    localStorage.setItem(CHAT_API_KEY_KEY, apiKey);
-    set({ apiKey });
+  connectApiKey: (value) => {
+    const apiKey = value.trim();
+    if (typeof localStorage !== "undefined" && typeof localStorage.removeItem === "function") localStorage.removeItem(CHAT_API_KEY_KEY);
+    if (apiKey) session?.setItem(CHAT_API_KEY_KEY, apiKey);
+    else session?.removeItem(CHAT_API_KEY_KEY);
+    set({ apiKey, apiKeyInput: "" });
   },
-  setInput: (input) => set({ input }),
-  setSessionListCollapsed: (value) => set({ isSessionListCollapsed: value }),
-  setActiveJob: (activeJob) => set({ activeJob }),
-  setStatusText: (statusText) => set({ statusText }),
-  setClarificationOptions: (clarificationOptions) => set({ clarificationOptions }),
-  setError: (error) => set({ error }),
+  setDraft: (key, value) => set({ drafts: { ...get().drafts, [key]: value } }),
+  setError: (key, value) => set({ errors: { ...get().errors, [key]: value } }),
+  setSessionListCollapsed: (isSessionListCollapsed) => set({ isSessionListCollapsed }),
+  resetIdentity: () => {
+    session?.removeItem(CHAT_API_KEY_KEY);
+    set({ apiKey: "", apiKeyInput: "", drafts: {}, errors: {} });
+  },
 }));
 
-function stepText(step?: string) {
-  const labels: Record<string, string> = {
-    queued: "Queued",
-    checking_context: "Checking context",
-    embedding: "Preparing context",
-    taking_decision: "Choosing next action",
-    authorizing: "Authorizing query",
-    executing_query: "Executing query",
-    shaping_result: "Shaping result",
-    formatting_response: "Formatting response",
-    response: "Finalizing response",
-  };
-  return step ? labels[step] || step.replaceAll("_", " ") : null;
-}
-
-function sessionFromCreated(created: Pick<ChatSession, "id" | "title" | "created_at">): ChatSession {
+function optimisticMessage(userId: string, sessionId: string, content: string): ChatMessage {
   return {
-    id: created.id,
-    api_key_id: "",
-    title: created.title,
-    status: "active",
-    context_json: {},
-    created_at: created.created_at,
-    updated_at: created.created_at,
-    expires_at: null,
-    archived_at: null,
+    id: `optimistic:${userId}:${sessionId}:${encodeURIComponent(content)}`,
+    session_id: sessionId,
+    job_id: null,
+    role: "user",
+    content,
+    metadata_json: {},
+    created_at: new Date().toISOString(),
   };
 }
 
-function activeJobCache(): ActiveJobCache | null {
+function activeIdentity(): { userId: string; sessionId: string; jobId: string } | null {
+  if (typeof localStorage === "undefined" || typeof localStorage.getItem !== "function") return null;
   try {
-    return JSON.parse(localStorage.getItem(CHAT_ACTIVE_JOB_KEY) || "null") as ActiveJobCache | null;
+    const value = JSON.parse(localStorage.getItem(CHAT_ACTIVE_JOB_KEY) ?? "null") as Record<string, unknown> | null;
+    return value && typeof value.userId === "string" && typeof value.sessionId === "string" && typeof value.jobId === "string"
+      ? value as { userId: string; sessionId: string; jobId: string }
+      : null;
   } catch {
     return null;
   }
 }
 
-function saveActiveJob(job: ChatJob) {
-  localStorage.setItem(CHAT_ACTIVE_JOB_KEY, JSON.stringify({ jobId: job.job_id, sessionId: job.session_id }));
-}
-
-function clearActiveJob() {
-  localStorage.removeItem(CHAT_ACTIVE_JOB_KEY);
-}
-
-function clarificationOptionsFrom(job: ChatJob): ClarificationOption[] {
-  const state = job.state_json as { options?: ClarificationOption[]; clarification?: { options?: ClarificationOption[] } } | null;
-  return state?.options || state?.clarification?.options || [];
-}
+const safeError = (error: unknown): string =>
+  error instanceof Error && /authentication|required|not found/i.test(error.message)
+    ? error.message
+    : "We could not complete that chat action. Please try again.";
 
 export function useChat() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const userId = user?.id ?? "";
   const [searchParams, setSearchParams] = useSearchParams();
-  const sessionParam = searchParams.get("session");
-  const streamAbort = useRef<AbortController | null>(null);
+  const requestedSessionId = searchParams.get("session");
+  const previousUserId = useRef(userId);
+  const pendingAdoptedJob = useRef<ChatJob | null>(null);
   const {
-    apiKey,
-    apiKeyInput,
-    input,
-    isSessionListCollapsed,
-    activeJob,
-    statusText,
-    clarificationOptions,
-    error,
-    setApiKeyInput,
-    saveApiKey,
-    setInput,
-    setSessionListCollapsed,
-    setActiveJob,
-    setStatusText,
-    setClarificationOptions,
-    setError,
+    apiKey, apiKeyInput, drafts, errors, isSessionListCollapsed,
+    setApiKeyInput, connectApiKey, setDraft, setError, setSessionListCollapsed, resetIdentity,
   } = useChatStore();
+  const previousApiKey = useRef(apiKey);
 
   const sessionsQuery = useQuery({
-    queryKey: CHAT_QUERY_KEYS.sessions(apiKey),
+    queryKey: CHAT_QUERY_KEYS.sessions(userId),
     queryFn: () => chatService.ListSessions(apiKey),
-    enabled: Boolean(apiKey),
+    enabled: Boolean(userId),
     retry: false,
     refetchOnWindowFocus: false,
-    staleTime: Infinity,
   });
-  const sessions = useMemo(() => sessionsQuery.data || [], [sessionsQuery.data]);
-  const selectedId = useMemo(() => {
-    if (sessions.some((session) => session.id === sessionParam)) return sessionParam;
-    return sessions[0]?.id || null;
-  }, [sessionParam, sessions]);
-  const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedId) || null,
-    [selectedId, sessions],
-  );
+  const sessions = useMemo(() => sessionsQuery.data ?? [], [sessionsQuery.data]);
+  const selectedId = selectedSessionIdFor(sessions, requestedSessionId, sessionsQuery.isFetched);
+  const selectedSession = selectedSessionFor(sessions, selectedId);
+  const draftIdentity = chatDraftKey(userId, selectedSession?.id ?? null);
+  const input = drafts[draftIdentity] ?? "";
 
   const messagesQuery = useQuery({
-    queryKey: selectedId ? CHAT_QUERY_KEYS.messages(apiKey, selectedId) : ["chat", "messages", apiKey, "none"],
-    queryFn: () => chatService.ListMessages(apiKey, selectedId || ""),
-    enabled: Boolean(apiKey && selectedId),
+    queryKey: CHAT_QUERY_KEYS.messages(userId, selectedSession?.id ?? "new"),
+    queryFn: () => chatService.ListMessages(apiKey, selectedSession!.id),
+    enabled: Boolean(userId && selectedSession),
     retry: false,
     refetchOnWindowFocus: false,
-    staleTime: Infinity,
   });
-  const messages = messagesQuery.data || [];
+  const messages = messagesQuery.data ?? [];
 
-  const refreshCurrentChat = useCallback(async (sessionId: string) => {
+  const reconcile = useCallback(async (sessionId: string): Promise<ChatMessage[]> => {
+    if (!userId || !sessionId) return [];
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: CHAT_QUERY_KEYS.messages(apiKey, sessionId) }),
-      queryClient.invalidateQueries({ queryKey: CHAT_QUERY_KEYS.sessions(apiKey) }),
+      queryClient.invalidateQueries({ queryKey: CHAT_QUERY_KEYS.sessions(userId) }),
+      queryClient.invalidateQueries({ queryKey: CHAT_QUERY_KEYS.messages(userId, sessionId) }),
     ]);
-  }, [apiKey, queryClient]);
-
-  const finishJob = useCallback(async (sessionId: string) => {
-    streamAbort.current?.abort();
-    clearActiveJob();
-    setActiveJob(null);
-    setStatusText(null);
-    setClarificationOptions([]);
-    await refreshCurrentChat(sessionId);
-  }, [refreshCurrentChat, setActiveJob, setClarificationOptions, setStatusText]);
-
-  const openStream = useCallback((jobId: string, sessionId: string) => {
-    if (!apiKey) return;
-    streamAbort.current?.abort();
-    const abort = new AbortController();
-    streamAbort.current = abort;
-    void streamChatJob(apiKey, jobId, (event, data) => {
-      if (event === "status") {
-        const job = data as ChatJob;
-        setActiveJob(job);
-        setStatusText(stepText(job.current_step));
-        return;
-      }
-      const update = data as ChatStreamUpdate;
-      setStatusText(stepText(update.step));
-      if (update.kind === "clarification") {
-        setClarificationOptions(update.payload?.options || []);
-        const currentJob = useChatStore.getState().activeJob;
-        setActiveJob(currentJob ? { ...currentJob, status: "waiting_for_user_input" } : null);
-      }
-      if (update.kind === "final") void finishJob(sessionId);
-      if (update.kind === "error") {
-        clearActiveJob();
-        setError(update.payload?.message || "Chat job failed");
-        setActiveJob(null);
-      }
-    }, abort.signal).catch((cause) => {
-      if (!abort.signal.aborted) {
-        setError(cause instanceof Error ? cause.message : "Chat stream failed");
-        setActiveJob(null);
-      }
+    return queryClient.fetchQuery({
+      queryKey: CHAT_QUERY_KEYS.messages(userId, sessionId),
+      queryFn: () => chatService.ListMessages(apiKey, sessionId),
     });
-  }, [apiKey, finishJob, setActiveJob, setClarificationOptions, setError, setStatusText]);
-
-  const createSessionMutation = useMutation({
-    mutationFn: () => chatService.CreateSession(apiKey, "Fineract analysis"),
-    onSuccess: (created) => {
-      const session = sessionFromCreated(created);
-      queryClient.setQueryData<ChatSession[]>(CHAT_QUERY_KEYS.sessions(apiKey), (current = []) => [session, ...current]);
-      queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(apiKey, session.id), []);
-      setSearchParams({ session: session.id });
-    },
-  });
+  }, [apiKey, queryClient, userId]);
+  const jobController = useChatJob({ apiKey, userId, sessionId: selectedSession?.id ?? null, reconcile });
 
   const startJobMutation = useMutation({
-    mutationFn: async (message: string) => {
-      let session = selectedSession;
-      if (!session) {
-        const created = await chatService.CreateSession(apiKey, "Fineract analysis");
-        const newSession = sessionFromCreated(created);
-        queryClient.setQueryData<ChatSession[]>(CHAT_QUERY_KEYS.sessions(apiKey), (current = []) => [newSession, ...current]);
-        queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(apiKey, newSession.id), []);
-        setSearchParams({ session: newSession.id });
-        session = newSession;
+    mutationFn: ({ sessionId, message }: { sessionId: string | null; message: string }) =>
+      chatService.StartJob(apiKey, sessionId, message),
+  });
+
+  const adoptStartedJob = useCallback(async (job: ChatJob, temporary: ChatMessage, sessionData?: ChatSession) => {
+    const adoptedSession = sessionData ?? await chatService.GetSession(apiKey, job.session_id);
+    const adoptedMessage = adoptOptimisticMessage(temporary, job.session_id, job.user_message_id, job.job_id);
+    queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(userId, "new"), (current = []) =>
+      removeOptimisticMessage(current, temporary.id));
+    queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(userId, job.session_id), (current = []) =>
+      current.some(({ id }) => id === adoptedMessage.id) ? current : [...current, adoptedMessage]);
+    queryClient.setQueryData<ChatSession[]>(CHAT_QUERY_KEYS.sessions(userId), (current = []) =>
+      [adoptedSession, ...current.filter(({ id }) => id !== adoptedSession.id)]);
+    pendingAdoptedJob.current = job;
+    setDraft(chatDraftKey(userId, null), "");
+    setError(chatDraftKey(userId, null), null);
+    setSearchParams({ session: job.session_id });
+  }, [apiKey, queryClient, setDraft, setError, setSearchParams, userId]);
+
+  const recoverAmbiguousFirstSend = useCallback(async (
+    previousSessionIds: ReadonlySet<string>, temporary: ChatMessage, message: string,
+  ): Promise<boolean> => {
+    const refreshed = await chatService.ListSessions(apiKey);
+    queryClient.setQueryData(CHAT_QUERY_KEYS.sessions(userId), refreshed);
+    for (const candidate of ambiguousRecoveryCandidates(previousSessionIds, refreshed)) {
+      const durableMessages = await chatService.ListMessages(apiKey, candidate.id);
+      const matched = matchingAmbiguousMessage(durableMessages, message);
+      if (!matched?.job_id) continue;
+      queryClient.setQueryData(CHAT_QUERY_KEYS.messages(userId, candidate.id), durableMessages);
+      const job = await chatService.GetJob(apiKey, matched.job_id);
+      await adoptStartedJob(job, temporary, candidate);
+      return true;
+    }
+    return false;
+  }, [adoptStartedJob, apiKey, queryClient, userId]);
+  const startJob = useCallback(async (sessionId: string, message: string, temporaryId: string) => {
+    try {
+      const job = await startJobMutation.mutateAsync({ sessionId, message });
+      if (job.user_message_id) {
+        queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(userId, sessionId), (current = []) =>
+          replaceOptimisticMessage(current, temporaryId, job.user_message_id!),
+        );
       }
-      return chatService.StartJob(apiKey, session.id, message);
-    },
-    onSuccess: (job, message) => {
-      saveActiveJob(job);
-      setActiveJob(job);
-      setStatusText(stepText(job.current_step));
-      setInput("");
-      setError(null);
-      setClarificationOptions([]);
-      queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(apiKey, job.session_id), (current = []) => [
-        ...current,
-        {
-          id: job.user_message_id || crypto.randomUUID(),
-          session_id: job.session_id,
-          job_id: job.job_id,
-          role: "user",
-          content: message,
-          metadata_json: {},
-          created_at: new Date().toISOString(),
-        },
-      ]);
-      openStream(job.job_id, job.session_id);
-    },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Failed to send message"),
-  });
-
-  const respondToJobMutation = useMutation({
-    mutationFn: (message: string) => {
-      if (!activeJob) throw new Error("No active chat job");
-      return chatService.RespondToJob(apiKey, activeJob.job_id, message);
-    },
-    onSuccess: (reply) => {
-      if (!activeJob) return;
-      setClarificationOptions([]);
-      queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(apiKey, reply.session_id), (current = []) => [...current, reply]);
-      openStream(activeJob.job_id, reply.session_id);
-    },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Failed to answer clarification"),
-  });
+      setDraft(chatDraftKey(userId, sessionId), "");
+      setError(chatDraftKey(userId, sessionId), null);
+      await jobController.start(job);
+    } catch (error) {
+      const key = chatDraftKey(userId, sessionId);
+      if (isAmbiguousJobStartFailure(error)) {
+        setError(key, "The send result is uncertain. Refresh this conversation before sending again.");
+        await reconcile(sessionId);
+      } else {
+        queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(userId, sessionId), (current = []) =>
+          removeOptimisticMessage(current, temporaryId),
+        );
+        setError(key, safeError(error));
+      }
+    }
+  }, [jobController, queryClient, reconcile, setDraft, setError, startJobMutation, userId]);
 
   useEffect(() => {
-    if (!selectedId || sessionParam === selectedId) return;
+    const pending = pendingAdoptedJob.current;
+    if (!pending || selectedSession?.id !== pending.session_id) return;
+    pendingAdoptedJob.current = null;
+    void jobController.start(pending);
+  }, [jobController, selectedSession?.id]);
+
+  useEffect(() => {
+    if (requestedSessionId === selectedId) return;
     setSearchParams({ session: selectedId }, { replace: true });
-  }, [selectedId, sessionParam, setSearchParams]);
+  }, [requestedSessionId, selectedId, setSearchParams]);
 
   useEffect(() => {
-    if (!apiKey || !selectedId) return;
-    const cachedJob = activeJobCache();
-    if (!cachedJob || cachedJob.sessionId !== selectedId || activeJob?.job_id === cachedJob.jobId) return;
-    const timeout = window.setTimeout(() => {
-      void chatService.GetJob(apiKey, cachedJob.jobId).then((job) => {
-        if (finishedStatuses.has(job.status)) {
-          clearActiveJob();
-          return;
+    const previous = previousUserId.current;
+    if (previous && previous !== userId) {
+      queryClient.removeQueries({ queryKey: ["chat", previous] });
+      if (typeof localStorage !== "undefined") localStorage.removeItem(CHAT_ACTIVE_JOB_KEY);
+      resetIdentity();
+    }
+    previousUserId.current = userId;
+  }, [queryClient, resetIdentity, userId]);
+
+  useEffect(() => {
+    if (previousApiKey.current === apiKey) return;
+    previousApiKey.current = apiKey;
+    if (userId) void queryClient.resetQueries({ queryKey: ["chat", userId] });
+  }, [apiKey, queryClient, userId]);
+
+  const lock = activeIdentity();
+  const hasActiveLock = Boolean(lock && lock.userId === userId) || jobController.isSendLocked;
+  const composerAvailability = chatComposerAvailability({
+    hasUser: Boolean(userId),
+    sessionsLoading: sessionsQuery.isLoading,
+    activeLock: hasActiveLock,
+    startingJob: startJobMutation.isPending,
+  });
+  const isSending = composerAvailability.disabled;
+  const sendDisabledReason = composerAvailability.reason;
+
+  const sendMessage = async () => {
+    if (composerAvailability.disabled) {
+      setError(draftIdentity, composerAvailability.reason);
+      return;
+    }
+    const message = validPrompt(input);
+    if (!message) {
+      setError(draftIdentity, input.trim() ? "Message must be between 1 and 1000 characters." : "Enter a message before sending.");
+      return;
+    }
+
+    if (!selectedSession) {
+      const temporary = optimisticMessage(userId, "new", message);
+      const previousSessionIds = new Set(sessions.map(({ id }) => id));
+      let startedJob: ChatJob | null = null;
+      queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(userId, "new"), (current = []) => [...current, temporary]);
+      try {
+        startedJob = await startJobMutation.mutateAsync({ sessionId: null, message });
+        await adoptStartedJob(startedJob, temporary);
+      } catch (error) {
+        if (startedJob || isAmbiguousJobStartFailure(error)) {
+          const recovered = await recoverAmbiguousFirstSend(previousSessionIds, temporary, message).catch(() => false);
+          if (!recovered) setError(draftIdentity, "The send result is uncertain. Refresh conversations before deliberately sending again.");
+        } else {
+          queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(userId, "new"), (current = []) =>
+            removeOptimisticMessage(current, temporary.id));
+          setError(draftIdentity, safeError(error));
         }
-        if (!activeStatuses.has(job.status)) return;
-        setActiveJob(job);
-        setStatusText(stepText(job.current_step));
-        setClarificationOptions(job.status === "waiting_for_user_input" ? clarificationOptionsFrom(job) : []);
-        openStream(job.job_id, job.session_id);
-      }).catch(() => clearActiveJob());
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [activeJob?.job_id, apiKey, openStream, selectedId, setActiveJob, setClarificationOptions, setStatusText]);
+      }
+      return;
+    }
 
-  useEffect(() => () => streamAbort.current?.abort(), []);
-
-  const sendMessage = () => {
-    const message = input.trim();
-    if (!apiKey || !message || activeStatuses.has(activeJob?.status || "") || startJobMutation.isPending) return;
-    startJobMutation.mutate(message);
-  };
-
-  const answerClarification = (message: string) => {
-    if (!apiKey || !activeJob) return;
-    respondToJobMutation.mutate(message);
+    const temporary = optimisticMessage(userId, selectedSession.id, message);
+    queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEYS.messages(userId, selectedSession.id), (current = []) => [...current, temporary]);
+    await startJob(selectedSession.id, message, temporary.id);
   };
 
   return {
@@ -318,18 +343,24 @@ export function useChat() {
     input,
     isSessionListCollapsed,
     isLoadingSessions: sessionsQuery.isLoading,
+    sessionsError: sessionsQuery.error ? safeError(sessionsQuery.error) : null,
     isLoadingMessages: messagesQuery.isLoading,
-    isSending: activeStatuses.has(activeJob?.status || "") || startJobMutation.isPending || respondToJobMutation.isPending,
-    statusText,
-    error: error || (sessionsQuery.error instanceof Error ? sessionsQuery.error.message : null) || (messagesQuery.error instanceof Error ? messagesQuery.error.message : null),
-    clarificationOptions,
+    isSending,
+    sendDisabledReason,
+    statusText: selectedSession ? jobController.statusLabel || null : null,
+    error: errors[draftIdentity] || jobController.error || (sessionsQuery.error || messagesQuery.error ? safeError(sessionsQuery.error || messagesQuery.error) : null),
+    clarificationOptions: selectedSession ? jobController.clarificationOptions : [],
+    clarificationMessage: selectedSession ? jobController.clarificationMessage : "",
+    isClarificationActive: Boolean(selectedSession && jobController.job?.status === "waiting_for_user_input"),
+    isAnswering: jobController.isAnswering,
     setApiKeyInput,
-    saveApiKey,
-    setInput,
+    saveApiKey: () => connectApiKey(apiKeyInput),
+    clearApiKey: () => connectApiKey(""),
+    setInput: (value: string) => setDraft(draftIdentity, value),
     setSessionListCollapsed,
     selectSession: (sessionId: string) => setSearchParams({ session: sessionId }),
-    createSession: () => createSessionMutation.mutate(),
+    createSession: () => setSearchParams({ session: "new" }),
     sendMessage,
-    answerClarification,
+    answerClarification: (payload: ChatJobResponse) => void jobController.answer(payload),
   };
 }

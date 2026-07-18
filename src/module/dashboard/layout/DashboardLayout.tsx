@@ -1,13 +1,11 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Home, LogOut, Menu, MessageCircle } from "lucide-react";
-import { EachElement } from "../../../shared/components/ui/each-element";
+import { BarChart3, LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { useIsMobile } from "@/shared/hooks/use-mobile";
-import HeaderControls from "./HeaderControls";
-import type { NavItem } from "@/shared/types";
-import { NAV_ITEMS } from "./nav-items";
 import { useAuth } from "@/module/auth/hooks";
+import HeaderControls from "./HeaderControls";
+import { NAV_ITEMS } from "./nav-items";
 
 export default function DashboardLayout({
   children,
@@ -16,256 +14,142 @@ export default function DashboardLayout({
   children: ReactNode;
   module?: "DASHBOARD" | "CHAT";
 }) {
-  const { logoutMutation, user } = useAuth()
+  const { logoutMutation, user } = useAuth();
   const navigate = useNavigate();
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-
   const location = useLocation();
   const isMobile = useIsMobile();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    const close = () => setMobileOpen(false);
-    window.addEventListener("popstate", close);
-    return () => window.removeEventListener("popstate", close);
+    const desktop = window.matchMedia("(min-width: 768px)");
+    const closeOnDesktop = (event: MediaQueryListEvent) => event.matches && setMobileOpen(false);
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
 
-  const [prevIsMobile, setPrevIsMobile] = useState(isMobile);
-  if (isMobile !== prevIsMobile) {
-    setPrevIsMobile(isMobile);
-    if (!isMobile) setMobileOpen(false);
-  }
-  const onChatView = location.pathname === "/chat";
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const drawer = drawerRef.current;
+    const trigger = triggerRef.current;
+    const focusable = () => Array.from(drawer?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      const first = items[0];
+      const last = items.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && (document.activeElement === first || !drawer?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (window.matchMedia("(max-width: 767px)").matches) trigger?.focus();
+    };
+  }, [mobileOpen]);
 
   async function onLogout() {
     await logoutMutation.mutateAsync();
     navigate("/signin");
   }
 
-  return (
-    <div className="h-screen bg-background text-foreground overflow-hidden">
-      <div className="flex w-full">
-        {module === "DASHBOARD" && (
-          <aside
-            className={
-              "z-20 hidden md:flex flex-col bg-sidebar text-sidebar-foreground transition-all duration-200 ease-linear " +
-              (collapsed ? "w-16" : "w-64")
-            }
-          >
-            <div className="px-3 py-4 border-b">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center rounded-md bg-primary/10 p-2">
-                  <div className="h-5 w-5 rounded-full bg-primary flex items-center justify-center text-primary-foreground">
-                    F
-                  </div>
-                </div>
-                {!collapsed && (
-                  <div className="flex flex-col">
-                    <span className="text-sm font-semibold">Fineract Chat</span>
-                    <span className="text-xs text-sidebar-foreground/70">
-                      Chat Console
+  const navigation = (
+    <nav aria-label="Primary navigation" className="flex-1 overflow-y-auto px-3 py-5 group-data-[collapsed=true]/sidebar:px-2">
+      {["Workspace", "Insights", "Manage"].map((group) => (
+        <div className="mb-6" key={group}>
+          <p className="mb-2 px-3 text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-sidebar-foreground/70 group-data-[collapsed=true]/sidebar:hidden">{group}</p>
+          <ul className="space-y-1">
+            {NAV_ITEMS.filter((item) => item.group === group).map((item) => {
+              const active = item.url === "/" ? location.pathname === "/" : item.url && (location.pathname === item.url || location.pathname.startsWith(`${item.url}/`));
+              return (
+                <li key={item.title}>
+                  {item.disabled ? (
+                    <span aria-disabled="true" title={item.title} className="flex min-h-10 cursor-not-allowed items-center gap-3 rounded-lg px-3 text-sm text-sidebar-foreground/65 group-data-[collapsed=true]/sidebar:justify-center">
+                      <item.icon className="size-4" aria-hidden="true" />
+                      <span className="flex-1 group-data-[collapsed=true]/sidebar:hidden">{item.title}</span>
+                      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-sidebar-foreground group-data-[collapsed=true]/sidebar:hidden">Soon</span>
                     </span>
-                  </div>
-                )}
-                <button
-                  aria-label="Toggle sidebar"
-                  onClick={() => setCollapsed((s) => !s)}
-                  className="ml-auto p-2 rounded-md hover:bg-sidebar-accent"
-                >
-                  <Menu className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-
-            <nav className="flex-1 overflow-auto py-4">
-              <DashboardNavigationList collapsed={collapsed} />
-            </nav>
-
-            <div className="px-3 py-4 border-t">
-              {!collapsed && (
-                <button 
-                  disabled={logoutMutation.isPending} 
-                  onClick={() => onLogout()}
-                  className="mt-3 w-full text-left px-3 py-2 rounded-md hover:bg-sidebar-accent flex items-center gap-3 hover:cursor-pointer"
-                >
-                  <LogOut className="h-4 w-4" /> {logoutMutation.isPending ? "Signing out..." : "Sign out"}
-                </button>
-              )}
-            </div>
-          </aside>
-        )}
-
-        {/* Mobile sidebar overlay */}
-        {mobileOpen && (
-          <div className="md:hidden fixed inset-0 z-30">
-            <div
-              className="absolute inset-0 bg-black/40"
-              onClick={() => setMobileOpen(false)}
-            />
-            <div className="absolute left-0 top-0 bottom-0 w-64 bg-sidebar p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-md bg-primary/10 p-2">
-                    <div className="h-5 w-5 rounded-full bg-primary" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold">
-                      Apache Fineract Chat
-                    </div>
-                    <div className="text-xs text-sidebar-foreground/70">
-                      Cashier
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setMobileOpen(false)}
-                  className="p-2 rounded-md hover:bg-sidebar-accent"
-                >
-                  <Menu className="h-4 w-4" />
-                </button>
-              </div>
-              <nav className="mt-6">
-                <ul className="space-y-2">
-                  <EachElement
-                    of={NAV_ITEMS}
-                    render={(item: NavItem) => {
-                      const isActive =
-                        item.url === "/"
-                          ? location.pathname === "/"
-                          : location.pathname === item.url ||
-                            location.pathname.startsWith(item.url + "/");
-
-                      return (
-                        <li key={item.title}>
-                          <Link
-                            to={item.url}
-                            className={
-                              "flex items-center gap-3 px-3 py-2 rounded-md " +
-                              (isActive
-                                ? "bg-primary/10 text-primary"
-                                : "hover:bg-sidebar-accent")
-                            }
-                          >
-                            <item.icon className="h-4 w-4" />
-                            <span>{item.title}</span>
-                          </Link>
-                        </li>
-                      );
-                    }}
-                  />
-                </ul>
-              </nav>
-            </div>
-          </div>
-        )}
-
-        {/* Main content area */}
-        <div className="flex-1 flex flex-col h-screen min-w-0 relative">
-          {/* Header */}
-          <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between md:px-6 py-4 border-b bg-white/50 dark:bg-slate-900/40 z-10">
-            <div className="flex items-start md:items-center gap-4">
-              <button
-                className="md:hidden p-2 rounded-md hover:bg-sidebar-accent"
-                onClick={() => setMobileOpen(true)}
-              >
-                <Menu className="h-5 w-5" />
-              </button>
-              <div>
-                <h2 className="flex flex-col md:flex-row text-sm md:text-2xl font-semibold">
-                  <span>Welcome back, </span> <span> {user?.username}!</span>
-                </h2>
-                <p className="hidden md:block text-xs md:text-sm text-muted-foreground">
-                  Here's what's happening with your store today.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
-              <div className="flex items-center gap-2 rounded-full border border-muted bg-muted/60 p-1 text-xs font-medium">
-                <Link
-                  to="/"
-                  className={
-                    "flex items-center gap-1 rounded-full px-3 py-1.5 transition-colors " +
-                    (!onChatView
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground")
-                  }
-                >
-                  <Home className="h-3.5 w-3.5" />
-                  Dashboard
-                </Link>
-                <Link
-                  to="/chat"
-                  className={
-                    "flex items-center gap-1 rounded-full px-3 py-1.5 transition-colors " +
-                    (onChatView
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground")
-                  }
-                >
-                  <MessageCircle className="h-3.5 w-3.5" />
-                  Chat
-                </Link>
-              </div>
-
-              <HeaderControls isMobile={isMobile} onLogout={onLogout} />
-            </div>
-          </header>
-
-          {/* Content */}
-          {module === "DASHBOARD" && (
-            <main className="flex-1 px-1 md:p-6 overflow-y-auto flex flex-col items-start space-y-3">
-              <div className="flex-1 w-full mx-auto flex flex-col">
-                {children}
-              </div>
-              {/* Footer */}
-              <footer className="px-1 md:px-6 py-4 border-t text-sm text-muted-foreground w-full items-end">
-                © {new Date().getFullYear()} Fineract Chat. All rights reserved.
-              </footer>
-            </main>
-          )}
-          {module === "CHAT" && (
-            <main className="min-h-0 flex-1 overflow-hidden px-1 md:p-3">
-              <div className="h-full min-h-0 w-full">{children}</div>
-            </main>
-          )}
+                  ) : (
+                    <Link to={item.url!} title={item.title} aria-label={item.title} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors group-data-[collapsed=true]/sidebar:justify-center ${active ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm" : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"}`}>
+                      <item.icon className="size-4" aria-hidden="true" />
+                      <span className="group-data-[collapsed=true]/sidebar:hidden">{item.title}</span>
+                      {active && <span className="ml-auto size-1.5 rounded-full bg-current group-data-[collapsed=true]/sidebar:hidden" aria-hidden="true" />}
+                    </Link>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         </div>
+      ))}
+    </nav>
+  );
+
+  const sidebar = (
+    <>
+      <div className="flex h-17 items-center gap-3 border-b border-sidebar-border px-5 group-data-[collapsed=true]/sidebar:px-2">
+        <span className="grid size-9 place-items-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground"><BarChart3 className="size-4" aria-hidden="true" /></span>
+        <div className="min-w-0 group-data-[collapsed=true]/sidebar:hidden"><p className="truncate text-sm font-semibold">Fineract Intelligence</p><p className="text-xs text-sidebar-foreground/70">Report workspace</p></div>
+      </div>
+      {navigation}
+      <div className="border-t border-sidebar-border p-3">
+        <div className="mb-1 flex items-center gap-3 rounded-lg px-3 py-2 group-data-[collapsed=true]/sidebar:justify-center group-data-[collapsed=true]/sidebar:px-0">
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-sidebar-accent text-xs font-semibold uppercase">{user?.username?.slice(0, 2) || "U"}</span>
+          <div className="min-w-0 group-data-[collapsed=true]/sidebar:hidden"><p className="truncate text-sm font-medium">{user?.username || "Team member"}</p><p className="text-xs text-sidebar-foreground/70">Authorized user</p></div>
+        </div>
+        <button aria-label={logoutMutation.isPending ? "Signing out" : "Sign out"} disabled={logoutMutation.isPending} onClick={onLogout} className="flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent disabled:opacity-50 group-data-[collapsed=true]/sidebar:justify-center">
+          <LogOut className="size-4" aria-hidden="true" /><span className="group-data-[collapsed=true]/sidebar:hidden">{logoutMutation.isPending ? "Signing out..." : "Sign out"}</span>
+        </button>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <aside data-collapsed={collapsed} className={`group/sidebar relative hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 motion-reduce:transition-none md:flex ${collapsed ? "w-20" : "w-64"}`}>
+        {sidebar}
+        <button aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)} className="absolute right-2 top-[1.125rem] grid size-8 place-items-center rounded-lg hover:bg-sidebar-accent">
+          {collapsed ? <PanelLeftOpen className="size-4" aria-hidden="true" /> : <PanelLeftClose className="size-4" aria-hidden="true" />}
+        </button>
+      </aside>
+
+      {mobileOpen && (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <button aria-label="Close navigation" className="absolute inset-0 bg-slate-950/35" onClick={() => setMobileOpen(false)} />
+          <aside ref={drawerRef} role="dialog" aria-modal="true" aria-label="Mobile navigation" className="relative flex h-full w-[min(18rem,88vw)] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-2xl">
+            {sidebar}
+            <button aria-label="Close navigation" onClick={() => setMobileOpen(false)} className="absolute right-3 top-3 grid size-10 place-items-center rounded-lg hover:bg-sidebar-accent"><X className="size-5" aria-hidden="true" /></button>
+          </aside>
+        </div>
+      )}
+
+      <div inert={mobileOpen} className="flex min-w-0 flex-1 flex-col">
+        <header className="flex min-h-17 items-center justify-between gap-3 border-b bg-background/90 px-4 backdrop-blur sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <button ref={triggerRef} aria-label="Open navigation" aria-expanded={mobileOpen} className="grid size-10 shrink-0 place-items-center rounded-lg border hover:bg-muted md:hidden" onClick={() => setMobileOpen(true)}><Menu className="size-5" aria-hidden="true" /></button>
+            <div className="min-w-0"><p className="truncate text-sm font-semibold">{module === "CHAT" ? "AI Report Chat" : "Report Dashboard"}</p><p className="hidden text-xs text-muted-foreground sm:block">Welcome back, {user?.username || "team member"}</p></div>
+          </div>
+          <HeaderControls isMobile={isMobile} onLogout={onLogout} />
+        </header>
+
+        <main className={module === "CHAT" ? "min-h-0 flex-1 overflow-hidden px-1 md:p-3" : "flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-7 lg:px-8"}>
+          <div className={module === "CHAT" ? "h-full min-h-0 w-full" : "mx-auto w-full max-w-7xl"}>{children}</div>
+        </main>
       </div>
     </div>
   );
 }
-
-const DashboardNavigationList = ({ collapsed }: { collapsed: boolean }) => {
-  return (
-    <ul className="space-y-1">
-      <EachElement
-        of={NAV_ITEMS}
-        render={(item) => {
-          const isActive =
-            item.url === "/"
-              ? location.pathname === "/"
-              : location.pathname === item.url ||
-                location.pathname.startsWith(item.url + "/");
-
-          return (
-            <li key={item.title}>
-              <Link
-                to={item.url}
-                className={
-                  "flex items-center gap-3 px-3 py-2 mx-2 rounded-md transition-colors text-sm " +
-                  (collapsed ? "justify-center" : "justify-start") +
-                  (isActive
-                    ? " bg-primary/10 text-primary"
-                    : " hover:bg-sidebar-accent")
-                }
-              >
-                <item.icon className="h-4 w-4" />
-                {!collapsed && <span className="truncate">{item.title}</span>}
-              </Link>
-            </li>
-          );
-        }}
-      />
-    </ul>
-  );
-};
