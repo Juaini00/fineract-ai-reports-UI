@@ -65,6 +65,7 @@ describe("AssistantResponse", () => {
     expect(html).not.toContain("secret");
     expect(html).not.toContain("trace");
     expect(html).toContain("<details");
+    expect(html).toContain('<summary class="cursor-pointer">Evidence</summary>');
   });
 
   it("renders clarification options in order as inert labels and ignores malformed data", () => {

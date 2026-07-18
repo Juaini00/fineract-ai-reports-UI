@@ -1,9 +1,19 @@
-import { ChevronsLeft, ChevronsRight, MessageCircle, Plus } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, MessageCircle, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/shared/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/shared/components/ui/dropdown-menu";
 import { cn } from "@/shared/lib/utils";
 import type { ChatSession } from "../types";
 
 const recency = (value: string) => new Date(value).toLocaleDateString([], { month: "short", day: "numeric" });
+
+export function SessionActionItems() {
+  return (
+    <>
+      <DropdownMenuItem disabled><Pencil />Rename <span className="ml-auto text-[10px] uppercase tracking-wide">Soon</span></DropdownMenuItem>
+      <DropdownMenuItem disabled variant="destructive"><Trash2 />Delete <span className="ml-auto text-[10px] uppercase tracking-wide">Soon</span></DropdownMenuItem>
+    </>
+  );
+}
 
 export default function SessionList({
   sessions,
@@ -32,7 +42,7 @@ export default function SessionList({
         <Button aria-label="Expand conversation history" aria-expanded="false" className="min-h-10 min-w-10" onClick={onToggleCollapsed} size="icon" type="button" variant="ghost"><ChevronsRight /></Button>
         <Button aria-label="New chat" className="min-h-10 min-w-10" onClick={onCreate} size="icon" type="button"><Plus /></Button>
         <ul className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto" aria-label="Recent conversations">
-          {sessions.map((item) => <li key={item.id}><button aria-current={item.id === selectedId ? "page" : undefined} aria-label={item.title || "Untitled chat"} className={cn("flex size-10 items-center justify-center rounded-lg", item.id === selectedId ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")} onClick={() => onSelect(item.id)} type="button"><MessageCircle className="size-4" /></button></li>)}
+          {sessions.map((item) => <li key={item.id}><button aria-current={item.id === selectedId ? "page" : undefined} aria-label={item.title || "Untitled chat"} className={cn("flex size-10 cursor-pointer items-center justify-center rounded-lg", item.id === selectedId ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")} onClick={() => onSelect(item.id)} type="button"><MessageCircle className="size-4" /></button></li>)}
         </ul>
       </nav>
     );
@@ -54,11 +64,15 @@ export default function SessionList({
         {!isLoading && !error && sessions.length > 0 && (
           <ul className="space-y-1">
             {sessions.map((item) => (
-              <li key={item.id}>
-                <button aria-current={item.id === selectedId ? "page" : undefined} className={cn("flex min-h-12 w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left hover:bg-muted", item.id === selectedId && "bg-muted")} onClick={() => onSelect(item.id)} type="button">
+              <li className={cn("flex items-center rounded-lg hover:bg-muted", item.id === selectedId && "bg-muted")} key={item.id}>
+                <button aria-current={item.id === selectedId ? "page" : undefined} className="flex min-h-12 min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 text-left" onClick={() => onSelect(item.id)} type="button">
                   <span className="truncate text-sm font-medium">{item.title || "Untitled chat"}</span>
                   <time className="shrink-0 text-xs text-muted-foreground" dateTime={item.updated_at}>{recency(item.updated_at)}</time>
                 </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<button aria-label={`Open actions for ${item.title || "Untitled chat"}`} className="flex min-h-10 min-w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground" type="button" />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-36"><SessionActionItems /></DropdownMenuContent>
+                </DropdownMenu>
               </li>
             ))}
           </ul>

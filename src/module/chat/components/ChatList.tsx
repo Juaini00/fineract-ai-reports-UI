@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/shared/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import type { ChatJobResponse, ChatMessage, ChatSession, ClarificationOption } from "../types";
@@ -8,6 +8,10 @@ import ClarificationPrompt from "./ClarificationPrompt";
 import JobProgress from "./JobProgress";
 
 const nearBottom = (node: HTMLElement) => node.scrollHeight - node.scrollTop - node.clientHeight < 96;
+
+// eslint-disable-next-line react-refresh/only-export-components
+export const getScrollMode = (initialized: boolean, shouldFollow: boolean) =>
+  !initialized ? "auto" : shouldFollow ? "smooth" : "preserve";
 
 export default function ChatList({
   selectedSession,
@@ -44,6 +48,7 @@ export default function ChatList({
 }) {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const shouldFollow = useRef(true);
+  const initialized = useRef(false);
   const [showLatest, setShowLatest] = useState(false);
   const scrollToLatest = (behavior: ScrollBehavior = "smooth") => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior });
@@ -51,10 +56,17 @@ export default function ChatList({
     setShowLatest(false);
   };
 
-  useEffect(() => {
-    if (shouldFollow.current) scrollToLatest();
-    else setShowLatest(true);
-  }, [messages, isSending, statusText]);
+  useLayoutEffect(() => {
+    if (isLoading) return;
+    const mode = getScrollMode(initialized.current, shouldFollow.current);
+    initialized.current = true;
+    if (mode === "preserve") setShowLatest(true);
+    else {
+      transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: mode });
+      shouldFollow.current = true;
+      setShowLatest(false);
+    }
+  }, [isLoading, messages, isSending, statusText]);
 
   return (
     <section aria-labelledby="chat-title" className="relative flex h-full min-h-0 flex-col">

@@ -117,7 +117,7 @@ export default function AssistantResponse({ message }: { message: ChatMessage })
         const label = text(action.label) || text(action.title) || text(action.message);
         return label ? <span key={index} className="assistant-result-action rounded-full border px-3 py-1 text-xs">{label}</span> : null;
       })}</div>}
-      {evidence.length > 0 && <details className="assistant-result-evidence text-xs text-muted-foreground"><summary>Evidence</summary><ul className="mt-2 space-y-1">{evidence.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
+      {evidence.length > 0 && <details className="assistant-result-evidence text-xs text-muted-foreground"><summary className="cursor-pointer">Evidence</summary><ul className="mt-2 space-y-1">{evidence.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
     </div>
   );
 }

@@ -35,6 +35,10 @@ export function OptionalScopePanel({ apiKey, input, onApply, onChange, onClear }
   );
 }
 
+export function MobileDrawerBackdrop({ onClose }: { onClose: () => void }) {
+  return <button aria-label="Close conversations" className="absolute inset-0 z-20 cursor-pointer bg-foreground/20 backdrop-blur-[1px] md:hidden" onClick={onClose} type="button" />;
+}
+
 export default function ChatWrapper() {
   const chat = useChat();
   const [isMobileSessionsOpen, setMobileSessionsOpen] = useState(false);
@@ -56,7 +60,7 @@ export default function ChatWrapper() {
       </div>
       {isMobileSessionsOpen && (
         <>
-        <button aria-label="Close conversations" className="absolute inset-0 z-20 bg-foreground/20 backdrop-blur-[1px] md:hidden" onClick={() => setMobileSessionsOpen(false)} type="button" />
+        <MobileDrawerBackdrop onClose={() => setMobileSessionsOpen(false)} />
         <aside aria-label="Conversation drawer" className="absolute inset-y-2 left-2 z-30 w-[min(18rem,calc(100%-1rem))] md:hidden" id="mobile-sessions">
           <Button aria-label="Close conversations" className="absolute right-2 top-2 z-10" onClick={() => setMobileSessionsOpen(false)} size="icon" type="button" variant="ghost"><X /></Button>
           <SessionList
