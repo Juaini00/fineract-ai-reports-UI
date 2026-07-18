@@ -35,10 +35,7 @@ export const authService = {
     return await apiGet<ApiResponse<User>>(
       {
         url: "/auth/me",
-        showToast: {
-          loading: "Fetching user data...",
-          error: "Failed to fetch user data.",
-        },
+        silent: true,
       },
     );
   },
@@ -46,11 +43,7 @@ export const authService = {
     return await apiPost<ApiResponse<AccessToken>>(
       {
         url: "/auth/refresh",
-        showToast: {
-          loading: "Refreshing session...",
-          success: "Session refreshed successfully.",
-          error: "Failed to refresh session.",
-        },
+        silent: true,
       },
     );
   },

@@ -17,8 +17,8 @@ export default function HeaderControls({
   isMobile: boolean;
   onLogout: () => void;
 }) {
-  const { theme, setTheme } = useTheme();
-  const isDark = theme === "dark";
+  const { resolvedTheme, setTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
 
   return (
     <div className="flex items-center gap-1 sm:gap-2">
